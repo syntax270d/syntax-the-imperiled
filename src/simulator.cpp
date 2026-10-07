@@ -91,6 +91,18 @@ namespace
             return '.';
         return ' ';
     }
+
+    void print_pixel(uint32_t pixel)
+    {
+        if (pixel != 0)
+        {
+            const auto red = (pixel >> 16) & 0xFF;
+            const auto green = (pixel >> 8) & 0xFF;
+            const auto blue = pixel & 0xFF;
+            std::cout << "\033[38;2;" << red << ';' << green << ';' << blue << 'm';
+        }
+        std::cout << pixel_glyph(pixel) << "\033[0m";
+    }
 }
 
 int main()
@@ -336,7 +348,10 @@ int main()
                   << "  | glyph density " << density << "/5"
                   << "  | charge " << static_cast<int>(charge_progress * 100) << "%\n\n";
         for (int i = 0; i < LED_COUNT; i += 2)
-            std::cout << pixel_glyph(pixels[i]) << pixel_glyph(pixels[i + 1]);
+        {
+            print_pixel(pixels[i]);
+            print_pixel(pixels[i + 1]);
+        }
         std::cout << "\n\nDemo cycles through a pulse, two held double-flex glitches, and an overcharge.\n"
                   << std::flush;
 
