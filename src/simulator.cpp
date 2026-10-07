@@ -1,88 +1,127 @@
+#include "animation.h"
+
 #include <algorithm>
-#include <array>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
-#include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <numeric>
-#include <random>
+#include <stdexcept>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace
 {
-    using Clock = std::chrono::steady_clock;
     using Milliseconds = std::chrono::milliseconds;
+    using overclock::Animator;
+    using overclock::Frame;
+    using overclock::Mode;
 
-    constexpr int LED_COUNT = 144;
-    constexpr float PULSE_THRESHOLD = 0.20f;
-    constexpr float FLEX_THRESHOLD = 0.45f;
-    constexpr float FLEX_RELEASE_THRESHOLD = 0.40f;
-    constexpr float OVERCHARGE_THRESHOLD = 0.80f;
-    constexpr float OVERCHARGE_RELEASE_THRESHOLD = 0.75f;
-    constexpr auto PULSE_DURATION = Milliseconds(180);
-    constexpr auto PULSE_COOLDOWN = Milliseconds(500);
-    constexpr auto DOUBLE_FLEX_WINDOW = Milliseconds(1500);
-    constexpr auto DOUBLE_FLEX_HOLD = Milliseconds(500);
-    constexpr auto GLITCH_DURATION = Milliseconds(2000);
-    constexpr auto OVERCHARGE_HOLD = Milliseconds(3000);
-    constexpr auto POWER_DOWN_DURATION = Milliseconds(600);
-    constexpr auto FLEX_COMBO_WINDOW = Milliseconds(3000);
-    constexpr auto FRAME_DURATION = Milliseconds(50);
-
-    struct InputSegment
+    void expect(bool condition, const std::string &message)
     {
-        Milliseconds duration;
-        float flex;
-        const char *label;
-    };
+        if (!condition)
+            throw std::runtime_error(message);
+    }
 
-    const std::vector<InputSegment> DEMO = {
-        {Milliseconds(14000), 0.0f, "Idle: baseline rain (one full-speed loop)"},
-        {Milliseconds(300), 0.30f, "Light flex: pulse"},
-        {Milliseconds(1000), 0.0f, "Idle: baseline rain"},
-        {Milliseconds(180), 0.55f, "Quick flex combo"},
-        {Milliseconds(180), 0.0f, "Release"},
-        {Milliseconds(180), 0.55f, "Quick flex combo"},
-        {Milliseconds(180), 0.0f, "Release"},
-        {Milliseconds(180), 0.55f, "Quick flex combo"},
-        {Milliseconds(180), 0.0f, "Release"},
-        {Milliseconds(180), 0.55f, "Quick flex combo"},
-        {Milliseconds(180), 0.0f, "Release"},
-        {Milliseconds(180), 0.55f, "Quick flex combo"},
-        {Milliseconds(180), 0.0f, "Release"},
-        {Milliseconds(180), 0.55f, "Quick flex combo"},
-        {Milliseconds(180), 0.0f, "Release"},
-        {Milliseconds(2200), 0.55f, "Medium flex: faster, denser rain"},
-        {Milliseconds(1800), 0.0f, "Idle: baseline rain"},
-        {Milliseconds(180), 0.55f, "First flex"},
-        {Milliseconds(180), 0.0f, "Release"},
-        {Milliseconds(700), 0.55f, "Second flex held: glitch"},
-        {Milliseconds(2400), 0.0f, "Idle: glitch ends, rain resumes"},
-        {Milliseconds(3400), 0.90f, "Tight hold: overcharge"},
-        {Milliseconds(1200), 0.0f, "Release: power down"},
-    };
-
-    const InputSegment &current_segment(Milliseconds cycle_time)
+    void test_adc_normalization()
     {
-        Milliseconds segment_start(0);
-        for (const auto &segment : DEMO)
+        expect(overclock::normalize_adc(0) == 0.0f, "ADC readings below calibration range clamp to zero");
+        expect(overclock::normalize_adc(500) == 0.5f, "ADC midpoint normalizes to 0.5");
+        expect(overclock::normalize_adc(1023) == 1.0f, "ADC readings above calibration range clamp to one");
+    }
+
+    void test_idle_has_multiple_streams()
+    {
+        Animator animator;
+        const Frame frame = animator.update(0.0f, Milliseconds(0));
+        const auto lit_pixels = std::count_if(
+            frame.pixels.begin(), frame.pixels.end(),
+            [](uint32_t pixel) { return pixel != 0; });
+
+        expect(frame.mode == Mode::Rain, "unflexed input stays in rain mode");
+        expect(frame.glyph_density == 0, "idle starts at baseline glyph density");
+        expect(lit_pixels >= overclock::STREAM_COUNT * 10,
+               "idle frame renders visible trails for multiple streams");
+        expect(frame.speed_min_leds_per_second > 0.0f &&
+                   frame.speed_max_leds_per_second > frame.speed_min_leds_per_second,
+               "streams expose a spread of baseline speeds");
+    }
+
+    void test_pulse_duration()
+    {
+        Animator animator;
+        animator.update(0.0f, Milliseconds(0));
+        const Frame pulse = animator.update(0.3f, Milliseconds(100));
+        const Frame expired = animator.update(0.0f, Milliseconds(300));
+
+        expect(pulse.mode == Mode::Pulse, "threshold crossing starts pulse");
+        expect(expired.mode == Mode::Rain, "pulse expires after its duration");
+    }
+
+    void test_repeated_flex_increases_density()
+    {
+        Animator animator;
+        animator.update(0.0f, Milliseconds(0));
+        for (int flex = 0; flex < 6; ++flex)
         {
-            if (cycle_time < segment_start + segment.duration)
-                return segment;
-            segment_start += segment.duration;
+            const auto onset = Milliseconds(10 + flex * 200);
+            animator.update(0.55f, onset);
+            animator.update(0.0f, onset + Milliseconds(80));
         }
-        return DEMO.front();
+
+        const Frame frame = animator.update(0.0f, Milliseconds(1300));
+        expect(frame.glyph_density == 5, "six flexes build and cap glyph density at five");
     }
 
-    float simulated_flex(float flex, std::mt19937 &random)
+    void test_double_flex_glitch()
     {
-        std::uniform_real_distribution<float> jitter(-0.008f, 0.008f);
-        return std::clamp(flex + jitter(random), 0.0f, 1.0f);
+        Animator animator;
+        animator.update(0.0f, Milliseconds(0));
+        animator.update(0.55f, Milliseconds(10));
+        animator.update(0.0f, Milliseconds(100));
+        animator.update(0.55f, Milliseconds(300));
+        const Frame glitch = animator.update(0.55f, Milliseconds(800));
+        const Frame ended = animator.update(0.0f, Milliseconds(2900));
+
+        expect(glitch.mode == Mode::Glitch, "held second flex triggers glitch");
+        expect(std::any_of(glitch.pixels.begin(), glitch.pixels.end(),
+                           [](uint32_t pixel) { return pixel == 0xFF0000; }),
+               "glitch frame contains crimson pixels");
+        expect(ended.mode == Mode::Rain, "glitch ends after its duration");
     }
 
-    char pixel_glyph(uint32_t pixel)
+    void test_overcharge_and_power_down()
+    {
+        Animator animator;
+        animator.update(0.0f, Milliseconds(0));
+        animator.update(0.9f, Milliseconds(10));
+        const Frame charged = animator.update(0.9f, Milliseconds(3010));
+        const Frame powering_down = animator.update(0.0f, Milliseconds(3110));
+        const Frame powered_down = animator.update(0.0f, Milliseconds(3800));
+
+        expect(charged.mode == Mode::Overcharge && charged.charge == 1.0f,
+               "three-second tight hold completes overcharge");
+        expect(charged.reversed, "overcharge reverses strip flow");
+        expect(powering_down.mode == Mode::PoweringDown,
+               "releasing after charge begins power down");
+        expect(powered_down.mode == Mode::Rain && powered_down.charge == 0.0f,
+               "power down returns to normal rain");
+    }
+
+    void test_early_release_cancels_charge()
+    {
+        Animator animator;
+        animator.update(0.0f, Milliseconds(0));
+        animator.update(0.9f, Milliseconds(10));
+        const Frame canceled = animator.update(0.0f, Milliseconds(1510));
+
+        expect(canceled.mode == Mode::PoweringDown && canceled.charge < 1.0f,
+               "early release cancels and fades the incomplete charge");
+    }
+
+    char glyph(uint32_t pixel)
     {
         const auto red = (pixel >> 16) & 0xFF;
         const auto green = (pixel >> 8) & 0xFF;
@@ -111,280 +150,151 @@ namespace
             const auto blue = pixel & 0xFF;
             std::cout << "\033[38;2;" << red << ';' << green << ';' << blue << 'm';
         }
-        std::cout << pixel_glyph(pixel) << "\033[0m";
+        std::cout << glyph(pixel) << "\033[0m";
+    }
+
+    const char *mode_name(Mode mode)
+    {
+        switch (mode)
+        {
+        case Mode::Rain:
+            return "RAIN";
+        case Mode::Pulse:
+            return "PULSE";
+        case Mode::Glitch:
+            return "GLITCH";
+        case Mode::Charging:
+            return "CHARGING";
+        case Mode::Overcharge:
+            return "OVERCHARGE";
+        case Mode::PoweringDown:
+            return "POWERING DOWN";
+        }
+        return "UNKNOWN";
+    }
+
+    void run_demo()
+    {
+        struct Segment
+        {
+            Milliseconds duration;
+            float flex;
+            const char *label;
+        };
+        const std::vector<Segment> segments = {
+            {Milliseconds(8000), 0.0f, "Idle: multiple rain streams"},
+            {Milliseconds(300), 0.30f, "Light flex: pulse"},
+            {Milliseconds(1000), 0.0f, "Idle"},
+            {Milliseconds(180), 0.55f, "Quick flex combo"},
+            {Milliseconds(180), 0.0f, "Release"},
+            {Milliseconds(180), 0.55f, "Quick flex combo"},
+            {Milliseconds(180), 0.0f, "Release"},
+            {Milliseconds(180), 0.55f, "Quick flex combo"},
+            {Milliseconds(180), 0.0f, "Release"},
+            {Milliseconds(180), 0.55f, "Quick flex combo"},
+            {Milliseconds(180), 0.0f, "Release"},
+            {Milliseconds(180), 0.55f, "Quick flex combo"},
+            {Milliseconds(180), 0.0f, "Release"},
+            {Milliseconds(180), 0.55f, "Quick flex combo"},
+            {Milliseconds(180), 0.0f, "Release"},
+            {Milliseconds(1800), 0.55f, "Medium flex: faster, denser rain"},
+            {Milliseconds(1800), 0.0f, "Idle"},
+            {Milliseconds(180), 0.55f, "First flex"},
+            {Milliseconds(180), 0.0f, "Release"},
+            {Milliseconds(700), 0.55f, "Second flex held: glitch"},
+            {Milliseconds(2400), 0.0f, "Idle: glitch ends"},
+            {Milliseconds(3400), 0.90f, "Tight hold: overcharge"},
+            {Milliseconds(1200), 0.0f, "Release: power down"},
+        };
+        const auto demo_duration = std::accumulate(
+            segments.begin(), segments.end(), Milliseconds(0),
+            [](Milliseconds total, const Segment &segment) { return total + segment.duration; });
+
+        Animator animator;
+        const auto start = std::chrono::steady_clock::now();
+        auto next_frame = start;
+        while (true)
+        {
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed = std::chrono::duration_cast<Milliseconds>(now - start);
+            Milliseconds cycle_time(elapsed.count() % demo_duration.count());
+            Milliseconds segment_start(0);
+            const Segment *current = &segments.front();
+            for (const auto &segment : segments)
+            {
+                if (cycle_time < segment_start + segment.duration)
+                {
+                    current = &segment;
+                    break;
+                }
+                segment_start += segment.duration;
+            }
+            const Frame frame = animator.update(
+                current->flex, std::chrono::duration_cast<Milliseconds>(elapsed));
+
+            std::cout << "\033[2J\033[H"
+                      << "Shared LED animation preview (Ctrl+C to quit)\n"
+                      << "Demo: " << current->label
+                      << " | mode: " << mode_name(frame.mode)
+                      << " | flex: " << static_cast<int>(frame.flex * 100) << "%"
+                      << " | glyph density: " << frame.glyph_density << "/5\n"
+                      << "Flow: " << (frame.reversed ? "LED 143 -> LED 0 (into wearer)" :
+                                                        "LED 0 -> LED 143 (toward strip end)")
+                      << " | speed: " << frame.speed_min_leds_per_second
+                      << "-" << frame.speed_max_leds_per_second << " LEDs/sec\n\n"
+                      << "LED 0 [";
+            for (const auto pixel : frame.pixels)
+                print_pixel(pixel);
+            std::cout << "] LED 143\n"
+                      << std::flush;
+
+            next_frame += Milliseconds(50);
+            std::this_thread::sleep_until(next_frame);
+        }
+    }
+
+    int run_tests()
+    {
+        const std::vector<std::pair<const char *, void (*)()>> tests = {
+            {"ADC normalization", test_adc_normalization},
+            {"multiple idle streams", test_idle_has_multiple_streams},
+            {"pulse duration", test_pulse_duration},
+            {"flex density", test_repeated_flex_increases_density},
+            {"double-flex glitch", test_double_flex_glitch},
+            {"overcharge and power down", test_overcharge_and_power_down},
+            {"early release cancellation", test_early_release_cancels_charge},
+        };
+
+        int failures = 0;
+        for (const auto &test : tests)
+        {
+            try
+            {
+                test.second();
+                std::cout << "[PASS] " << test.first << '\n';
+            }
+            catch (const std::exception &error)
+            {
+                ++failures;
+                std::cerr << "[FAIL] " << test.first << ": " << error.what() << '\n';
+            }
+        }
+
+        std::cout << tests.size() - failures << "/" << tests.size() << " tests passed\n";
+        return failures == 0 ? 0 : 1;
     }
 }
 
-int main()
+int main(int argc, char **argv)
 {
-    std::mt19937 random(std::random_device{}());
-    std::array<uint32_t, LED_COUNT> pixels{};
-    std::vector<Clock::time_point> recent_flexes;
-    const Milliseconds demo_duration = std::accumulate(
-        DEMO.begin(), DEMO.end(), Milliseconds(0),
-        [](Milliseconds total, const InputSegment &segment)
-        { return total + segment.duration; });
-
-    float rain_head = 0.0f;
-    float pulse_head = 0.0f;
-    float charge_progress = 0.0f;
-    float power_down_charge = 0.0f;
-    bool pulse_threshold_active = false;
-    bool gesture_active = false;
-    bool has_first_flex = false;
-    bool waiting_for_double_flex_hold = false;
-    bool charge_tracking = false;
-    bool powering_down = false;
-    bool pulse_active = false;
-    Clock::time_point first_flex_time{};
-    Clock::time_point double_flex_hold_start{};
-    Clock::time_point charge_start{};
-    Clock::time_point power_down_start{};
-    Clock::time_point pulse_start{};
-    Clock::time_point pulse_until{};
-    Clock::time_point pulse_cooldown_until{};
-    Clock::time_point glitch_start{};
-    Clock::time_point glitch_until{};
-    const auto start = Clock::now();
-    auto next_frame = start;
-    auto previous_frame = start;
-
-    while (true)
+    if (argc == 2 && std::string(argv[1]) == "--demo")
     {
-        const auto now = Clock::now();
-        const auto runtime = std::chrono::duration_cast<Milliseconds>(now - start);
-        const Milliseconds cycle_time(runtime.count() % demo_duration.count());
-        const auto &segment = current_segment(cycle_time);
-        const float flex_pct = simulated_flex(segment.flex, random);
-        const float frame_scale =
-            std::chrono::duration<float>(now - previous_frame).count() * 60.0f;
-        previous_frame = now;
-
-        if (flex_pct >= PULSE_THRESHOLD && !pulse_threshold_active)
-        {
-            pulse_threshold_active = true;
-            if (now >= pulse_cooldown_until)
-            {
-                pulse_active = true;
-                pulse_head = rain_head;
-                pulse_start = now;
-                pulse_until = now + PULSE_DURATION;
-                pulse_cooldown_until = now + PULSE_COOLDOWN;
-            }
-        }
-        else if (flex_pct < PULSE_THRESHOLD - 0.05f)
-        {
-            pulse_threshold_active = false;
-        }
-
-        if (flex_pct >= FLEX_THRESHOLD && !gesture_active)
-        {
-            gesture_active = true;
-            while (!recent_flexes.empty() && now - recent_flexes.front() > FLEX_COMBO_WINDOW)
-                recent_flexes.erase(recent_flexes.begin());
-            recent_flexes.push_back(now);
-
-            if (has_first_flex && now - first_flex_time <= DOUBLE_FLEX_WINDOW)
-            {
-                waiting_for_double_flex_hold = true;
-                double_flex_hold_start = now;
-                has_first_flex = false;
-            }
-            else
-            {
-                has_first_flex = true;
-                first_flex_time = now;
-            }
-        }
-        else if (flex_pct < FLEX_RELEASE_THRESHOLD && gesture_active)
-        {
-            gesture_active = false;
-            if (waiting_for_double_flex_hold)
-            {
-                waiting_for_double_flex_hold = false;
-                has_first_flex = false;
-            }
-        }
-
-        if (has_first_flex && now - first_flex_time > DOUBLE_FLEX_WINDOW)
-            has_first_flex = false;
-
-        if (waiting_for_double_flex_hold && flex_pct >= OVERCHARGE_THRESHOLD)
-        {
-            waiting_for_double_flex_hold = false;
-            has_first_flex = false;
-        }
-        else if (waiting_for_double_flex_hold &&
-                 now - double_flex_hold_start >= DOUBLE_FLEX_HOLD)
-        {
-            glitch_start = now;
-            glitch_until = now + GLITCH_DURATION;
-            waiting_for_double_flex_hold = false;
-            has_first_flex = false;
-        }
-
-        const bool tightly_flexed = charge_tracking
-                                        ? flex_pct >= OVERCHARGE_RELEASE_THRESHOLD
-                                        : flex_pct >= OVERCHARGE_THRESHOLD;
-        if (!powering_down && tightly_flexed)
-        {
-            if (!charge_tracking)
-            {
-                charge_tracking = true;
-                charge_start = now;
-            }
-            charge_progress = std::min(
-                1.0f,
-                std::chrono::duration<float>(now - charge_start).count() /
-                    std::chrono::duration<float>(OVERCHARGE_HOLD).count());
-        }
-        else if (!powering_down && charge_tracking)
-        {
-            powering_down = true;
-            power_down_start = now;
-            power_down_charge = charge_progress;
-            charge_tracking = false;
-        }
-
-        if (powering_down)
-        {
-            const auto elapsed = now - power_down_start;
-            const float fade = std::max(
-                0.0f,
-                1.0f - std::chrono::duration<float>(elapsed).count() /
-                    std::chrono::duration<float>(POWER_DOWN_DURATION).count());
-            charge_progress = power_down_charge * fade;
-            if (elapsed >= POWER_DOWN_DURATION)
-            {
-                powering_down = false;
-                charge_progress = 0.0f;
-            }
-        }
-        else if (!charge_tracking)
-        {
-            charge_progress = 0.0f;
-        }
-
-        if (pulse_active && now >= pulse_until)
-            pulse_active = false;
-        while (!recent_flexes.empty() && now - recent_flexes.front() > FLEX_COMBO_WINDOW)
-            recent_flexes.erase(recent_flexes.begin());
-
-        const int density = std::min(5, std::max(0, static_cast<int>(recent_flexes.size()) - 1));
-        const float trail_length = 15.0f + density * 5.0f;
-        const int glyph_spacing = std::max(4, 10 - density);
-        const float elapsed_seconds = std::chrono::duration<float>(now - start).count();
-        float animation_speed = 0.2f + flex_pct * 0.8f;
-        const float brightness = 40.0f + flex_pct * 215.0f;
-        if (charge_progress > 0.0f)
-            animation_speed = 1.0f + charge_progress * 11.0f;
-
-        if (charge_progress > 0.0f)
-        {
-            rain_head -= animation_speed * frame_scale;
-            if (rain_head < 0.0f)
-            {
-                rain_head = std::fmod(rain_head, static_cast<float>(LED_COUNT));
-                if (rain_head < 0.0f)
-                    rain_head += LED_COUNT;
-            }
-        }
-        else
-        {
-            rain_head += animation_speed * frame_scale;
-            if (rain_head >= LED_COUNT)
-                rain_head = std::fmod(rain_head, static_cast<float>(LED_COUNT));
-        }
-
-        const bool glitch_active = now < glitch_until && charge_progress == 0.0f;
-        const float pulse_elapsed = std::chrono::duration<float>(now - pulse_start).count();
-        const float current_pulse_head = std::fmod(
-            pulse_head + pulse_elapsed * 40.0f, static_cast<float>(LED_COUNT));
-
-        for (int i = 0; i < LED_COUNT; ++i)
-        {
-            if (glitch_active)
-            {
-                const auto glitch_elapsed =
-                    std::chrono::duration_cast<Milliseconds>(now - glitch_start).count();
-                pixels[i] = ((i * 17 + glitch_elapsed / 40) % 10 < 3) ? 0xFF0000 : 0;
-                continue;
-            }
-
-            const float distance = charge_progress > 0.0f
-                                       ? std::fmod(rain_head - i + LED_COUNT, static_cast<float>(LED_COUNT))
-                                       : std::fmod(i - rain_head + LED_COUNT, static_cast<float>(LED_COUNT));
-            uint32_t pixel = 0;
-            if (distance < 1.0f)
-            {
-                pixel = flex_pct > OVERCHARGE_THRESHOLD ? 0xFFFFFF : 0x88FF88;
-            }
-            else if (distance < trail_length)
-            {
-                const float fade = 1.0f - distance / trail_length;
-                const auto green = static_cast<uint32_t>(brightness * fade);
-                const auto blue = static_cast<uint32_t>(brightness * 0.3f * fade * (1.0f + flex_pct));
-                pixel = (green << 16) | blue;
-                const int glyph_offset = static_cast<int>(elapsed_seconds * animation_speed);
-                const int phase = charge_progress > 0.0f
-                                      ? ((i + glyph_offset) % glyph_spacing + glyph_spacing) % glyph_spacing
-                                      : ((i - glyph_offset) % glyph_spacing + glyph_spacing) % glyph_spacing;
-                if (phase == 0)
-                    pixel = (std::min(255u, green * 3 / 2) << 16) | std::min(255u, blue * 3 / 2);
-            }
-
-            if (pulse_active)
-            {
-                const float pulse_distance =
-                    std::fmod(i - current_pulse_head + LED_COUNT, static_cast<float>(LED_COUNT));
-                if (pulse_distance < 2.0f)
-                    pixel = 0xFFFFFF;
-            }
-
-            if (charge_progress > 0.0f)
-            {
-                const auto glow = static_cast<uint32_t>(24.0f + 156.0f * charge_progress);
-                const float blend = charge_progress * 0.9f;
-                const auto red = static_cast<uint32_t>(((pixel >> 16) & 0xFF) * (1.0f - blend) + glow * blend);
-                const auto green = static_cast<uint32_t>(((pixel >> 8) & 0xFF) * (1.0f - blend) + glow * blend);
-                const auto blue = static_cast<uint32_t>((pixel & 0xFF) * (1.0f - blend) + glow * blend);
-                pixel = (red << 16) | (green << 8) | blue;
-                const int spacing = std::max(3, 8 - density);
-                const int phase = ((i + static_cast<int>(elapsed_seconds * animation_speed)) % spacing + spacing) % spacing;
-                if (phase == 0)
-                {
-                    const auto glyph = static_cast<uint32_t>(
-                        std::min(255.0f, 120.0f + 135.0f * charge_progress));
-                    pixel = (glyph << 16) | (glyph << 8) | glyph;
-                }
-            }
-            pixels[i] = pixel;
-        }
-
-        std::cout << "\033[2J\033[H"
-                  << "Flex LED simulator (Ctrl+C to quit)  |  "
-                  << (glitch_active ? "GLITCH" : charge_progress >= 1.0f ? "OVERCHARGE" :
-                      charge_progress > 0.0f ? "CHARGING" : pulse_active ? "PULSE" : "RAIN")
-                  << "  | flex " << static_cast<int>(flex_pct * 100) << "%"
-                  << "  | glyph density " << density << "/5"
-                  << "  | charge " << static_cast<int>(charge_progress * 100) << "%\n"
-                  << "Demo: " << segment.label << "\n"
-                  << "Flow: " << (charge_progress > 0.0f ? "LED 143 -> LED 0 (into wearer)" :
-                                      "LED 0 -> LED 143 (toward strip end)")
-                  << "  | " << animation_speed << " LEDs/frame"
-                  << "  | " << animation_speed * 60.0f << " LEDs/sec"
-                  << "  | " << LED_COUNT / (animation_speed * 60.0f) << " sec/loop\n\n"
-                  << "LED 0 [";
-        for (int i = 0; i < LED_COUNT; i += 2)
-        {
-            print_pixel(pixels[i]);
-            print_pixel(pixels[i + 1]);
-        }
-        std::cout << "] LED 143\n\n"
-                  << "The strip wraps continuously; this longer idle section shows the baseline rain flow.\n"
-                  << std::flush;
-
-        next_frame += FRAME_DURATION;
-        std::this_thread::sleep_until(next_frame);
+        run_demo();
+        return 0;
     }
+    if (argc == 1)
+        return run_tests();
+
+    std::cerr << "Usage: " << argv[0] << " [--demo]\n";
+    return 2;
 }

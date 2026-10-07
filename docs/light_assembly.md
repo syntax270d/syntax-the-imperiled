@@ -51,4 +51,4 @@ The hardware loop is driven by [`src/overclock.cpp`](../src/overclock.cpp)[cite:
 * **Flex combos:** Repeated flexes within three seconds increase trail and glyph density, while a medium hold adds a gentle brightness breath.
 * **Overcharge:** Holding a tight flex for three seconds reverses the flow and ramps into a bright white glow with brighter glyphs. Releasing fades the effect out over 600 ms.
 
-The gesture thresholds and timings are defined near the top of `src/overclock.cpp`. The normalized flex reading is based on the current ADC calibration, so tune those thresholds for the installed sensor.
+The hardware driver in `src/overclock.cpp` and the ASCII simulator both use the shared animation engine in `src/animation.cpp` / `src/animation.h`. Gesture thresholds and timings live in `src/animation.cpp`; the normalized flex reading is based on the current ADC calibration, so tune those thresholds for the installed sensor. Run `./simulator` to test the shared behavior without hardware, or `./simulator --demo` to preview it in ASCII.

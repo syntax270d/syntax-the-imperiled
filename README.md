@@ -52,17 +52,17 @@ Install required C++ build tools and the rpi_ws281x driver library:
 
 ### 3. Compilation & Execution
 Compile the C++ engine:
-`g++ -O2 src/overclock.cpp -o overclock -lws2811`
+`g++ -std=c++17 -O2 src/overclock.cpp src/animation.cpp -o overclock -lws2811`
 
 Execute with root privileges (required for DMA memory access):
 `sudo ./overclock`
 
-### Hardware-free ASCII Simulator
-Build and run the simulator on a regular Linux or Windows development machine; it does not access SPI or require `rpi_ws281x`:
-`g++ -std=c++17 -O2 src/simulator.cpp -o simulator`
+### Shared Animation Tests And ASCII Preview
+Build and run the shared-logic tests on a regular Linux or Windows development machine; this does not access SPI or require `rpi_ws281x`:
+`g++ -std=c++17 -O2 src/simulator.cpp src/animation.cpp -o simulator`
 `./simulator`
 
-The simulator loops through idle rain (including a full baseline-speed strip pass), pulse, a quick-flex density build-up, double-flex glitch, and overcharge. It displays flow direction, speed, and estimated time per strip pass. It uses ANSI true-color escape sequences, so run it in a color-capable terminal. Press `Ctrl+C` to quit.
+By default, `simulator` runs deterministic assertions against the same animation logic used by the hardware driver and exits nonzero if a test fails. Run `./simulator --demo` for the looping ASCII preview of those shared calculations. The preview uses ANSI true-color escape sequences, so run it in a color-capable terminal; press `Ctrl+C` to quit.
 
 ---
 
@@ -74,4 +74,4 @@ The simulator loops through idle rain (including a full baseline-speed strip pas
 * **Flex Combos:** Repeated flexes within a three-second window increase the rain trail and glyph density, up to five density steps. Holding a medium flex adds a gentle brightness breath.
 * **Overcharge:** Hold a tight flex for three seconds to reverse the flow and ramp into a bright white glow with brighter glyphs. Releasing powers the effect down over 600 ms; releasing before the hold completes cancels the charge.
 
-Gesture thresholds use the normalized sensor value in `src/overclock.cpp` and may need calibration for the installed FSR.
+Gesture thresholds use normalized sensor values and may need calibration for the installed FSR. The thresholds and animation timings are centralized in `src/animation.cpp`.
