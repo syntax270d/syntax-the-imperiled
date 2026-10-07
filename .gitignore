@@ -5,6 +5,7 @@
 *.out
 overclock
 simulator
+overclock.spec
 
 # Build Directories
 build/

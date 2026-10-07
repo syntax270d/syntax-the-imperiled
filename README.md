@@ -57,12 +57,19 @@ Compile the C++ engine:
 Execute with root privileges (required for DMA memory access):
 `sudo ./overclock`
 
-### Shared Animation Tests And ASCII Preview
-Build and run the shared-logic tests on a regular Linux or Windows development machine; this does not access SPI or require `rpi_ws281x`:
+### Hardware-free ASCII Simulator
+Build and run the 144-LED visual preview on a regular Linux or Windows development machine; it uses the same `Animator` as the hardware driver and does not access SPI or require `rpi_ws281x`:
 `g++ -std=c++17 -O2 src/simulator.cpp src/animation.cpp -o simulator`
 `./simulator`
 
-By default, `simulator` runs deterministic assertions against the same animation logic used by the hardware driver and exits nonzero if a test fails. Run `./simulator --demo` for the looping ASCII preview of those shared calculations. The preview uses ANSI true-color escape sequences, so run it in a color-capable terminal; press `Ctrl+C` to quit.
+The preview cycles through idle rain, pulse, flex density build-up, double-flex glitch, and overcharge. It displays the 144 LEDs as colored ASCII, along with flow direction and speed. Use a terminal that supports ANSI true-color; press `Ctrl+C` to quit.
+
+### Shared Animation Tests
+The deterministic tests for the animation logic live in `src/overclock.spec.cpp`:
+`g++ -std=c++17 -O2 src/overclock.spec.cpp src/animation.cpp -o overclock.spec`
+`./overclock.spec`
+
+The test runner exits nonzero if any assertion fails and does not require LED hardware or `rpi_ws281x`.
 
 ---
 
