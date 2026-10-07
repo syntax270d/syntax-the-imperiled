@@ -57,6 +57,13 @@ Compile the C++ engine:
 Execute with root privileges (required for DMA memory access):
 `sudo ./overclock`
 
+### Hardware-free ASCII Simulator
+Build and run the simulator on a regular Linux or Windows development machine; it does not access SPI or require `rpi_ws281x`:
+`g++ -std=c++17 -O2 src/simulator.cpp -o simulator`
+`./simulator`
+
+The simulator loops through demo sensor gestures for the pulse, deliberate double-flex glitch, and overcharge. Press `Ctrl+C` to quit.
+
 ---
 
 ## 📜 Character Lore & Interactive Mechanics
