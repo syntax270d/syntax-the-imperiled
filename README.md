@@ -62,7 +62,7 @@ Build and run the simulator on a regular Linux or Windows development machine; i
 `g++ -std=c++17 -O2 src/simulator.cpp -o simulator`
 `./simulator`
 
-The simulator loops through demo sensor gestures for the pulse, deliberate double-flex glitch, and overcharge. It uses ANSI true-color escape sequences, so run it in a color-capable terminal. Press `Ctrl+C` to quit.
+The simulator loops through idle rain (including a full baseline-speed strip pass), pulse, a quick-flex density build-up, double-flex glitch, and overcharge. It displays flow direction, speed, and estimated time per strip pass. It uses ANSI true-color escape sequences, so run it in a color-capable terminal. Press `Ctrl+C` to quit.
 
 ---
 

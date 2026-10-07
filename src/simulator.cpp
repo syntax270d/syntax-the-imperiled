@@ -35,39 +35,49 @@ namespace
     {
         Milliseconds duration;
         float flex;
+        const char *label;
     };
 
     const std::vector<InputSegment> DEMO = {
-        {Milliseconds(800), 0.0f},
-        {Milliseconds(220), 0.30f},
-        {Milliseconds(550), 0.0f},
-        {Milliseconds(180), 0.55f},
-        {Milliseconds(180), 0.0f},
-        {Milliseconds(650), 0.55f},
-        {Milliseconds(2200), 0.0f},
-        {Milliseconds(180), 0.55f},
-        {Milliseconds(180), 0.0f},
-        {Milliseconds(650), 0.55f},
-        {Milliseconds(1600), 0.0f},
-        {Milliseconds(3400), 0.90f},
-        {Milliseconds(900), 0.0f},
-        {Milliseconds(700), 0.0f},
+        {Milliseconds(14000), 0.0f, "Idle: baseline rain (one full-speed loop)"},
+        {Milliseconds(300), 0.30f, "Light flex: pulse"},
+        {Milliseconds(1000), 0.0f, "Idle: baseline rain"},
+        {Milliseconds(180), 0.55f, "Quick flex combo"},
+        {Milliseconds(180), 0.0f, "Release"},
+        {Milliseconds(180), 0.55f, "Quick flex combo"},
+        {Milliseconds(180), 0.0f, "Release"},
+        {Milliseconds(180), 0.55f, "Quick flex combo"},
+        {Milliseconds(180), 0.0f, "Release"},
+        {Milliseconds(180), 0.55f, "Quick flex combo"},
+        {Milliseconds(180), 0.0f, "Release"},
+        {Milliseconds(180), 0.55f, "Quick flex combo"},
+        {Milliseconds(180), 0.0f, "Release"},
+        {Milliseconds(180), 0.55f, "Quick flex combo"},
+        {Milliseconds(180), 0.0f, "Release"},
+        {Milliseconds(2200), 0.55f, "Medium flex: faster, denser rain"},
+        {Milliseconds(1800), 0.0f, "Idle: baseline rain"},
+        {Milliseconds(180), 0.55f, "First flex"},
+        {Milliseconds(180), 0.0f, "Release"},
+        {Milliseconds(700), 0.55f, "Second flex held: glitch"},
+        {Milliseconds(2400), 0.0f, "Idle: glitch ends, rain resumes"},
+        {Milliseconds(3400), 0.90f, "Tight hold: overcharge"},
+        {Milliseconds(1200), 0.0f, "Release: power down"},
     };
 
-    float simulated_flex(Milliseconds cycle_time, std::mt19937 &random)
+    const InputSegment &current_segment(Milliseconds cycle_time)
     {
         Milliseconds segment_start(0);
-        float flex = 0.0f;
         for (const auto &segment : DEMO)
         {
             if (cycle_time < segment_start + segment.duration)
-            {
-                flex = segment.flex;
-                break;
-            }
+                return segment;
             segment_start += segment.duration;
         }
+        return DEMO.front();
+    }
 
+    float simulated_flex(float flex, std::mt19937 &random)
+    {
         std::uniform_real_distribution<float> jitter(-0.008f, 0.008f);
         return std::clamp(flex + jitter(random), 0.0f, 1.0f);
     }
@@ -137,13 +147,18 @@ int main()
     Clock::time_point glitch_until{};
     const auto start = Clock::now();
     auto next_frame = start;
+    auto previous_frame = start;
 
     while (true)
     {
         const auto now = Clock::now();
         const auto runtime = std::chrono::duration_cast<Milliseconds>(now - start);
         const Milliseconds cycle_time(runtime.count() % demo_duration.count());
-        const float flex_pct = simulated_flex(cycle_time, random);
+        const auto &segment = current_segment(cycle_time);
+        const float flex_pct = simulated_flex(segment.flex, random);
+        const float frame_scale =
+            std::chrono::duration<float>(now - previous_frame).count() * 60.0f;
+        previous_frame = now;
 
         if (flex_pct >= PULSE_THRESHOLD && !pulse_threshold_active)
         {
@@ -262,17 +277,23 @@ int main()
         float animation_speed = 0.2f + flex_pct * 0.8f;
         const float brightness = 40.0f + flex_pct * 215.0f;
         if (charge_progress > 0.0f)
-        {
             animation_speed = 1.0f + charge_progress * 11.0f;
-            rain_head -= animation_speed;
+
+        if (charge_progress > 0.0f)
+        {
+            rain_head -= animation_speed * frame_scale;
             if (rain_head < 0.0f)
-                rain_head += LED_COUNT;
+            {
+                rain_head = std::fmod(rain_head, static_cast<float>(LED_COUNT));
+                if (rain_head < 0.0f)
+                    rain_head += LED_COUNT;
+            }
         }
         else
         {
-            rain_head += animation_speed;
+            rain_head += animation_speed * frame_scale;
             if (rain_head >= LED_COUNT)
-                rain_head -= LED_COUNT;
+                rain_head = std::fmod(rain_head, static_cast<float>(LED_COUNT));
         }
 
         const bool glitch_active = now < glitch_until && charge_progress == 0.0f;
@@ -346,13 +367,21 @@ int main()
                       charge_progress > 0.0f ? "CHARGING" : pulse_active ? "PULSE" : "RAIN")
                   << "  | flex " << static_cast<int>(flex_pct * 100) << "%"
                   << "  | glyph density " << density << "/5"
-                  << "  | charge " << static_cast<int>(charge_progress * 100) << "%\n\n";
+                  << "  | charge " << static_cast<int>(charge_progress * 100) << "%\n"
+                  << "Demo: " << segment.label << "\n"
+                  << "Flow: " << (charge_progress > 0.0f ? "LED 143 -> LED 0 (into wearer)" :
+                                      "LED 0 -> LED 143 (toward strip end)")
+                  << "  | " << animation_speed << " LEDs/frame"
+                  << "  | " << animation_speed * 60.0f << " LEDs/sec"
+                  << "  | " << LED_COUNT / (animation_speed * 60.0f) << " sec/loop\n\n"
+                  << "LED 0 [";
         for (int i = 0; i < LED_COUNT; i += 2)
         {
             print_pixel(pixels[i]);
             print_pixel(pixels[i + 1]);
         }
-        std::cout << "\n\nDemo cycles through a pulse, two held double-flex glitches, and an overcharge.\n"
+        std::cout << "] LED 143\n\n"
+                  << "The strip wraps continuously; this longer idle section shows the baseline rain flow.\n"
                   << std::flush;
 
         next_frame += FRAME_DURATION;
