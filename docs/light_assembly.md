@@ -46,5 +46,9 @@ The hardware loop is driven by [`src/overclock.cpp`](../src/overclock.cpp)[cite:
 ### Key Features of the Driver:
 * **SPI ADC Polling:** Continuously samples channel 0 of the MCP3008 ADC to measure FSR pressure dynamics[cite: 2, 3].
 * **DMA Output:** Uses `rpi_ws281x` on DMA Channel 10 / GPIO 18 to render high-frequency LED animations without CPU jitter[cite: 2, 3].
-* **18% Corporeal Glitch State:** Emulates spatial packet loss by triggering randomized 120-frame crimson red stutter cycles when idle[cite: 2, 3].
-* **Flex Override:** Squeezing the pressure pad overrides the error loop, accelerating the rain animation and driving full-brightness white surges[cite: 2, 3].
+* **Pulse:** Crossing a light-flex threshold sends a short bright ripple, with a 180 ms duration and 500 ms cooldown.
+* **Double-flex glitch:** Two flexes above the gesture threshold, with the second held for 500 ms within 1.5 seconds, trigger a two-second crimson stutter.
+* **Flex combos:** Repeated flexes within three seconds increase trail and glyph density, while a medium hold adds a gentle brightness breath.
+* **Overcharge:** Holding a tight flex for three seconds reverses the flow and ramps into a bright white glow with brighter glyphs. Releasing fades the effect out over 600 ms.
+
+The gesture thresholds and timings are defined near the top of `src/overclock.cpp`. The normalized flex reading is based on the current ADC calibration, so tune those thresholds for the installed sensor.

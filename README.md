@@ -62,5 +62,9 @@ Execute with root privileges (required for DMA memory access):
 ## 📜 Character Lore & Interactive Mechanics
 
 * **The Spatial Clipping Curse:** Processing reality at sub-atomic speeds causes severe motor-frame drops and spatial packet loss[cite: 5]. Navigating doorframes inflicts -1HP elbow clipping damage, while climbing staircases triggers a -2HP collision check error[cite: 5].
-* **18% Corporeal Glitch Loop:** The core software (`overclock.cpp`) executes a randomized 18% mathematical stall loop, dropping animation speeds and sputtering crimson red error states across the forearm array[cite: 5, 6].
-* **Muscle Overclocking:** Squeezing or flexing the forearm-mounted FSR 402 pressure sensor overrides the error loop, accelerating animation frame rates and triggering a white-hot hardware reboot surge[cite: 5, 6].
+* **Pulse:** Crossing a light-flex threshold sends a short bright ripple down the strip. Pulses last 180 ms and have a 500 ms cooldown.
+* **Corporeal Glitch:** Flex twice above the gesture threshold, with the second flex held for 500 ms within 1.5 seconds of the first, to trigger a two-second crimson stutter.
+* **Flex Combos:** Repeated flexes within a three-second window increase the rain trail and glyph density, up to five density steps. Holding a medium flex adds a gentle brightness breath.
+* **Overcharge:** Hold a tight flex for three seconds to reverse the flow and ramp into a bright white glow with brighter glyphs. Releasing powers the effect down over 600 ms; releasing before the hold completes cancels the charge.
+
+Gesture thresholds use the normalized sensor value in `src/overclock.cpp` and may need calibration for the installed FSR.
