@@ -326,7 +326,7 @@ namespace overclock
                             const int glyph_width =
                                 GLYPH_WIDTHS[(glyph_index + stream) % GLYPH_WIDTHS.size()];
                             const float glyph_lane_length =
-                                std::max(1.0f, glyph_spacing - glyph_width);
+                                static_cast<float>(std::max(1, glyph_spacing - glyph_width));
                             const float glyph_speed =
                                 animation_speed * STREAM_SPEEDS[stream] * 60.0f *
                                 GLYPH_MOMENTUM_SCALE * (1.0f - 3.0f / glyph_width);
