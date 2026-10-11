@@ -2,14 +2,134 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cerrno>
+#include <cstring>
 #include <iostream>
 #include <numeric>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <conio.h>
+#else
+#include <csignal>
+#include <sys/select.h>
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 namespace
 {
     using Milliseconds = std::chrono::milliseconds;
+
+#ifndef _WIN32
+    volatile std::sig_atomic_t stop_requested = 0;
+
+    void handle_interrupt(int)
+    {
+        stop_requested = 1;
+    }
+#endif
+
+    class KeyboardInput
+    {
+    public:
+        KeyboardInput()
+        {
+#ifndef _WIN32
+            if (!isatty(STDIN_FILENO))
+                return;
+
+            if (tcgetattr(STDIN_FILENO, &original_terminal_) != 0)
+                throw std::runtime_error(
+                    std::string("Could not read terminal settings: ") + std::strerror(errno));
+
+            auto terminal = original_terminal_;
+            terminal.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+            terminal.c_cc[VMIN] = 0;
+            terminal.c_cc[VTIME] = 0;
+            if (tcsetattr(STDIN_FILENO, TCSANOW, &terminal) != 0)
+                throw std::runtime_error(
+                    std::string("Could not enable keyboard input: ") + std::strerror(errno));
+            terminal_configured_ = true;
+
+            previous_interrupt_handler_ = std::signal(SIGINT, handle_interrupt);
+            if (previous_interrupt_handler_ == SIG_ERR)
+            {
+                tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal_);
+                terminal_configured_ = false;
+                throw std::runtime_error("Could not install interrupt handler");
+            }
+            interrupt_handler_installed_ = true;
+#endif
+        }
+
+        ~KeyboardInput()
+        {
+#ifndef _WIN32
+            if (terminal_configured_ && tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal_) != 0)
+                std::cerr << "Could not restore terminal settings: " << std::strerror(errno) << '\n';
+            if (interrupt_handler_installed_)
+                std::signal(SIGINT, previous_interrupt_handler_);
+#endif
+        }
+
+        bool available() const
+        {
+#ifdef _WIN32
+            return true;
+#else
+            return terminal_configured_;
+#endif
+        }
+
+        bool poll_space()
+        {
+#ifdef _WIN32
+            bool pressed = false;
+            while (_kbhit())
+            {
+                if (_getch() == ' ')
+                    pressed = true;
+            }
+            return pressed;
+#else
+            if (!terminal_configured_)
+                return false;
+
+            bool pressed = false;
+            while (true)
+            {
+                fd_set input;
+                FD_ZERO(&input);
+                FD_SET(STDIN_FILENO, &input);
+                timeval timeout{};
+                const int ready = select(STDIN_FILENO + 1, &input, nullptr, nullptr, &timeout);
+                if (ready == 0 || (ready < 0 && errno == EINTR))
+                    return pressed;
+                if (ready < 0)
+                    throw std::runtime_error(
+                        std::string("Could not read keyboard input: ") + std::strerror(errno));
+
+                char key = 0;
+                if (read(STDIN_FILENO, &key, 1) != 1)
+                    return pressed;
+                if (key == ' ')
+                    pressed = true;
+            }
+#endif
+        }
+
+    private:
+#ifndef _WIN32
+        termios original_terminal_{};
+        void (*previous_interrupt_handler_)(int) = SIG_DFL;
+        bool terminal_configured_ = false;
+        bool interrupt_handler_installed_ = false;
+#endif
+    };
 
     struct InputSegment
     {
@@ -103,10 +223,17 @@ namespace
             [](Milliseconds total, const InputSegment &segment)
             { return total + segment.duration; });
 
+        KeyboardInput keyboard;
+        bool manual_input = false;
+        bool simulated_pressure = false;
         overclock::Animator animator;
         const auto start = std::chrono::steady_clock::now();
         auto next_frame = start;
+#ifdef _WIN32
         while (true)
+#else
+        while (!stop_requested)
+#endif
         {
             const auto now = std::chrono::steady_clock::now();
             const auto elapsed = std::chrono::duration_cast<Milliseconds>(now - start);
@@ -123,10 +250,25 @@ namespace
                 segment_start += segment.duration;
             }
 
-            const overclock::Frame frame = animator.update(current->flex, elapsed);
+            if (keyboard.poll_space())
+            {
+                manual_input = true;
+                simulated_pressure = !simulated_pressure;
+            }
+            const float flex = manual_input
+                                   ? (simulated_pressure ? 0.90f : 0.0f)
+                                   : current->flex;
+            const overclock::Frame frame = animator.update(flex, elapsed);
             std::cout << "\033[2J\033[H"
-                      << "Shared LED strip preview (Ctrl+C to quit)\n"
-                      << "Demo: " << current->label
+                      << "Shared LED strip preview (Space toggles pressure; Ctrl+C to quit)\n"
+                      << (manual_input
+                              ? (simulated_pressure ? "Keyboard input: pressure pressed"
+                                                    : "Keyboard input: pressure released")
+                              : "Demo: ")
+                      << (manual_input ? "" : current->label)
+                      << (keyboard.available()
+                              ? " | Space: toggle simulated pressure (90% / 0%)"
+                              : " | keyboard unavailable (stdin is not a terminal)")
                       << " | mode: " << mode_name(frame.mode)
                       << " | flex: " << static_cast<int>(frame.flex * 100) << "%"
                       << " | glyph density: " << frame.glyph_density << "/5\n"
@@ -140,6 +282,10 @@ namespace
             std::cout << "] LED 143\n"
                       << std::flush;
 
+#ifndef _WIN32
+            if (stop_requested)
+                break;
+#endif
             next_frame += Milliseconds(50);
             std::this_thread::sleep_until(next_frame);
         }

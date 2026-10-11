@@ -46,6 +46,33 @@ namespace
                "streams expose a spread of baseline speeds");
     }
 
+    void test_stepped_stream_blocks_and_pulsing()
+    {
+        Animator dimmed_animator;
+        Animator bright_animator;
+        const Frame dimmed = dimmed_animator.update(0.0f, Milliseconds(0));
+        const Frame bright = bright_animator.update(0.0f, Milliseconds(240));
+        const auto green = [](uint32_t pixel) { return (pixel >> 8) & 0xFF; };
+
+        expect(dimmed.pixels[3] == dimmed.pixels[4] &&
+                   dimmed.pixels[4] == dimmed.pixels[5],
+               "stream trail renders in three-LED blocks");
+        expect(green(bright.pixels[3]) > green(dimmed.pixels[3]),
+               "stream blocks pulse between dim and bright states");
+    }
+
+    void test_phosphor_trail_persists_in_green()
+    {
+        Animator animator;
+        const Frame frame = animator.update(0.0f, Milliseconds(0));
+        const uint32_t tail_pixel = frame.pixels[18];
+
+        expect(((tail_pixel >> 8) & 0xFF) >= 12,
+               "green phosphor remains visible well behind the stream head");
+        expect(((tail_pixel >> 16) & 0xFF) == 0,
+               "phosphor trail uses the green channel rather than red");
+    }
+
     void test_pulse_duration()
     {
         Animator animator;
@@ -123,6 +150,8 @@ namespace
         const std::vector<std::pair<const char *, void (*)()>> tests = {
             {"ADC normalization", test_adc_normalization},
             {"multiple idle streams", test_idle_has_multiple_streams},
+            {"stepped stream blocks and pulsing", test_stepped_stream_blocks_and_pulsing},
+            {"phosphor trail persistence", test_phosphor_trail_persists_in_green},
             {"pulse duration", test_pulse_duration},
             {"flex density", test_repeated_flex_increases_density},
             {"double-flex glitch", test_double_flex_glitch},

@@ -11,6 +11,11 @@ namespace overclock
             0.76f, 0.91f, 1.0f, 1.13f, 1.29f};
         constexpr std::array<float, STREAM_COUNT> STREAM_TRAIL_SCALES = {
             0.82f, 1.0f, 0.9f, 1.12f, 0.76f};
+        constexpr int STREAM_BLOCK_SIZE = 3;
+        constexpr auto STREAM_PULSE_INTERVAL = std::chrono::milliseconds(240);
+        constexpr float STREAM_PULSE_DIMMING = 0.65f;
+        constexpr float PHOSPHOR_TRAIL_SCALE = 1.6f;
+        constexpr float PHOSPHOR_FADE_EXPONENT = 0.45f;
         constexpr float PULSE_THRESHOLD = 0.20f;
         constexpr float FLEX_THRESHOLD = 0.45f;
         constexpr float FLEX_RELEASE_THRESHOLD = 0.40f;
@@ -262,21 +267,26 @@ namespace overclock
                 const float distance = charge_progress_ > 0.0f
                                            ? std::fmod(rain_heads_[stream] - i + LED_COUNT, static_cast<float>(LED_COUNT))
                                            : std::fmod(i - rain_heads_[stream] + LED_COUNT, static_cast<float>(LED_COUNT));
+                const float stepped_distance =
+                    static_cast<float>(static_cast<int>(distance) / STREAM_BLOCK_SIZE * STREAM_BLOCK_SIZE);
                 uint32_t stream_pixel = 0;
-                if (distance < 1.0f)
+                if (stepped_distance < STREAM_BLOCK_SIZE)
                 {
                     stream_pixel = flex_pct > OVERCHARGE_THRESHOLD ? 0xFFFFFF : 0x88FF88;
                 }
                 else
                 {
-                    const float stream_trail_length = trail_length * STREAM_TRAIL_SCALES[stream];
-                    if (distance < stream_trail_length)
+                    const float stream_trail_length =
+                        trail_length * PHOSPHOR_TRAIL_SCALE * STREAM_TRAIL_SCALES[stream];
+                    if (stepped_distance < stream_trail_length)
                     {
-                        const float fade = 1.0f - distance / stream_trail_length;
+                        const float fade = std::pow(
+                            1.0f - stepped_distance / stream_trail_length,
+                            PHOSPHOR_FADE_EXPONENT);
                         const auto green = static_cast<uint32_t>(base_brightness * fade);
                         const auto blue = static_cast<uint32_t>(
-                            (base_brightness * 0.3f) * fade * (1.0f + flex_pct));
-                        stream_pixel = (green << 16) | blue;
+                            (base_brightness * 0.3f) * std::pow(fade, 1.5f) * (1.0f + flex_pct));
+                        stream_pixel = (green << 8) | blue;
                         const int glyph_offset = static_cast<int>(
                             elapsed_seconds * animation_speed * STREAM_SPEEDS[stream]) + stream * 3;
                         const int glyph_phase = charge_progress_ > 0.0f
@@ -286,6 +296,10 @@ namespace overclock
                             stream_pixel = scale_pixel(stream_pixel, 1.5f);
                     }
                 }
+                const auto pulse_step = now.count() / STREAM_PULSE_INTERVAL.count();
+                const auto block_index = static_cast<std::int64_t>(stepped_distance) / STREAM_BLOCK_SIZE;
+                if ((pulse_step + block_index) % 2 != 0)
+                    stream_pixel = scale_pixel(stream_pixel, STREAM_PULSE_DIMMING);
                 if (pixel_strength(stream_pixel) > pixel_strength(pixel))
                     pixel = stream_pixel;
             }

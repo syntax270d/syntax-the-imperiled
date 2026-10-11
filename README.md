@@ -62,7 +62,7 @@ Build and run the 144-LED visual preview on a regular Linux or Windows developme
 `g++ -std=c++17 -O2 src/simulator.cpp src/animation.cpp -o simulator`
 `./simulator`
 
-The preview cycles through idle rain, pulse, flex density build-up, double-flex glitch, and overcharge. It displays the 144 LEDs as colored ASCII, along with flow direction and speed. Use a terminal that supports ANSI true-color; press `Ctrl+C` to quit.
+The preview cycles through idle rain, pulse, flex density build-up, double-flex glitch, and overcharge. It displays the 144 LEDs as colored ASCII, along with flow direction and speed. Press `Space` to switch from the demo to manual input; each press toggles the simulated pressure sensor between 90% flex and released (0%). Use a terminal that supports ANSI true-color; press `Ctrl+C` to quit.
 
 ### Shared Animation Tests
 The deterministic tests for the animation logic live in `src/overclock.spec.cpp`:
@@ -77,6 +77,8 @@ The test runner exits nonzero if any assertion fails and does not require LED ha
 
 * **The Spatial Clipping Curse:** Processing reality at sub-atomic speeds causes severe motor-frame drops and spatial packet loss[cite: 5]. Navigating doorframes inflicts -1HP elbow clipping damage, while climbing staircases triggers a -2HP collision check error[cite: 5].
 * **Pulse:** Crossing a light-flex threshold sends a short bright ripple down the strip. Pulses last 180 ms and have a 500 ms cooldown.
+* **Monospaced Stutter:** Rain streams advance in pulsing three-LED blocks, giving the flow a low-bandwidth terminal/radar cadence.
+* **Phosphor Afterglow:** Green stream trails extend farther and decay with a slow, nonlinear fade for a persistent terminal-phosphor look.
 * **Corporeal Glitch:** Flex twice above the gesture threshold, with the second flex held for 500 ms within 1.5 seconds of the first, to trigger a two-second crimson stutter.
 * **Flex Combos:** Repeated flexes within a three-second window increase the rain trail and glyph density, up to five density steps. Holding a medium flex adds a gentle brightness breath.
 * **Overcharge:** Hold a tight flex for three seconds to reverse the flow and ramp into a bright white glow with brighter glyphs. Releasing powers the effect down over 600 ms; releasing before the hold completes cancels the charge.
