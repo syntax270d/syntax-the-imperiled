@@ -121,17 +121,23 @@ namespace
         Animator animator;
         animator.update(0.0f, Milliseconds(0));
         animator.update(0.9f, Milliseconds(10));
+        const Frame charging = animator.update(0.9f, Milliseconds(1510));
         const Frame charged = animator.update(0.9f, Milliseconds(3010));
         const Frame powering_down = animator.update(0.0f, Milliseconds(3110));
         const Frame powered_down = animator.update(0.0f, Milliseconds(3800));
 
+        expect(charging.mode == Mode::Charging && !charging.reversed,
+               "flow stays forward while overcharge is building");
         expect(charged.mode == Mode::Overcharge && charged.charge == 1.0f,
                "three-second tight hold completes overcharge");
         expect(charged.reversed, "overcharge reverses strip flow");
         expect(powering_down.mode == Mode::PoweringDown,
                "releasing after charge begins power down");
+        expect(powering_down.reversed,
+               "completed overcharge stays reversed while powering down");
         expect(powered_down.mode == Mode::Rain && powered_down.charge == 0.0f,
-               "power down returns to normal rain");
+               "power down returns to normal forward-flowing rain");
+        expect(!powered_down.reversed, "normal flow resumes after power down");
     }
 
     void test_early_release_cancels_charge()
@@ -143,6 +149,7 @@ namespace
 
         expect(canceled.mode == Mode::PoweringDown && canceled.charge < 1.0f,
                "early release cancels and fades the incomplete charge");
+        expect(!canceled.reversed, "incomplete charge never reverses the flow");
     }
 
     int run_tests()

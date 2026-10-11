@@ -1,8 +1,8 @@
 #include "animation.h"
 
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
-#include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <numeric>
@@ -23,6 +23,7 @@
 namespace
 {
     using Milliseconds = std::chrono::milliseconds;
+    constexpr auto SPACE_REPEAT_TIMEOUT = Milliseconds(700);
 
 #ifndef _WIN32
     volatile std::sig_atomic_t stop_requested = 0;
@@ -85,21 +86,18 @@ namespace
 #endif
         }
 
-        bool poll_space()
+        bool poll_space_held()
         {
 #ifdef _WIN32
-            bool pressed = false;
             while (_kbhit())
             {
                 if (_getch() == ' ')
-                    pressed = true;
+                    record_space_press();
             }
-            return pressed;
 #else
             if (!terminal_configured_)
                 return false;
 
-            bool pressed = false;
             while (true)
             {
                 fd_set input;
@@ -108,21 +106,32 @@ namespace
                 timeval timeout{};
                 const int ready = select(STDIN_FILENO + 1, &input, nullptr, nullptr, &timeout);
                 if (ready == 0 || (ready < 0 && errno == EINTR))
-                    return pressed;
+                    break;
                 if (ready < 0)
                     throw std::runtime_error(
                         std::string("Could not read keyboard input: ") + std::strerror(errno));
 
                 char key = 0;
                 if (read(STDIN_FILENO, &key, 1) != 1)
-                    return pressed;
+                    break;
                 if (key == ' ')
-                    pressed = true;
+                    record_space_press();
             }
 #endif
+            return has_space_press_ &&
+                   std::chrono::steady_clock::now() - last_space_press_ <= SPACE_REPEAT_TIMEOUT;
         }
 
     private:
+        void record_space_press()
+        {
+            last_space_press_ = std::chrono::steady_clock::now();
+            has_space_press_ = true;
+        }
+
+        std::chrono::steady_clock::time_point last_space_press_{};
+        bool has_space_press_ = false;
+
 #ifndef _WIN32
         termios original_terminal_{};
         void (*previous_interrupt_handler_)(int) = SIG_DFL;
@@ -225,7 +234,6 @@ namespace
 
         KeyboardInput keyboard;
         bool manual_input = false;
-        bool simulated_pressure = false;
         overclock::Animator animator;
         const auto start = std::chrono::steady_clock::now();
         auto next_frame = start;
@@ -250,24 +258,22 @@ namespace
                 segment_start += segment.duration;
             }
 
-            if (keyboard.poll_space())
-            {
+            const bool space_held = keyboard.poll_space_held();
+            if (space_held)
                 manual_input = true;
-                simulated_pressure = !simulated_pressure;
-            }
             const float flex = manual_input
-                                   ? (simulated_pressure ? 0.90f : 0.0f)
+                                   ? (space_held ? 0.90f : 0.0f)
                                    : current->flex;
             const overclock::Frame frame = animator.update(flex, elapsed);
             std::cout << "\033[2J\033[H"
-                      << "Shared LED strip preview (Space toggles pressure; Ctrl+C to quit)\n"
+                      << "Shared LED strip preview (hold Space for pressure; Ctrl+C to quit)\n"
                       << (manual_input
-                              ? (simulated_pressure ? "Keyboard input: pressure pressed"
-                                                    : "Keyboard input: pressure released")
+                              ? (space_held ? "Keyboard input: pressure held"
+                                            : "Keyboard input: pressure released")
                               : "Demo: ")
                       << (manual_input ? "" : current->label)
                       << (keyboard.available()
-                              ? " | Space: toggle simulated pressure (90% / 0%)"
+                              ? " | hold Space: 90% flex; release: 0%"
                               : " | keyboard unavailable (stdin is not a terminal)")
                       << " | mode: " << mode_name(frame.mode)
                       << " | flex: " << static_cast<int>(frame.flex * 100) << "%"

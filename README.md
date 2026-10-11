@@ -62,7 +62,7 @@ Build and run the 144-LED visual preview on a regular Linux or Windows developme
 `g++ -std=c++17 -O2 src/simulator.cpp src/animation.cpp -o simulator`
 `./simulator`
 
-The preview cycles through idle rain, pulse, flex density build-up, double-flex glitch, and overcharge. It displays the 144 LEDs as colored ASCII, along with flow direction and speed. Press `Space` to switch from the demo to manual input; each press toggles the simulated pressure sensor between 90% flex and released (0%). Use a terminal that supports ANSI true-color; press `Ctrl+C` to quit.
+The preview cycles through idle rain, pulse, flex density build-up, double-flex glitch, and overcharge. It displays the 144 LEDs as colored ASCII, along with flow direction and speed. Hold `Space` to switch from the demo to manual input and apply 90% flex; release it to return to 0% flex. Terminal-based SSH sessions approximate key release using keyboard repeat, with pressure released after about 700 ms without another Space event. Use a terminal that supports ANSI true-color; press `Ctrl+C` to quit.
 
 ### Shared Animation Tests
 The deterministic tests for the animation logic live in `src/overclock.spec.cpp`:
@@ -81,6 +81,6 @@ The test runner exits nonzero if any assertion fails and does not require LED ha
 * **Phosphor Afterglow:** Green stream trails extend farther and decay with a slow, nonlinear fade for a persistent terminal-phosphor look.
 * **Corporeal Glitch:** Flex twice above the gesture threshold, with the second flex held for 500 ms within 1.5 seconds of the first, to trigger a two-second crimson stutter.
 * **Flex Combos:** Repeated flexes within a three-second window increase the rain trail and glyph density, up to five density steps. Holding a medium flex adds a gentle brightness breath.
-* **Overcharge:** Hold a tight flex for three seconds to reverse the flow and ramp into a bright white glow with brighter glyphs. Releasing powers the effect down over 600 ms; releasing before the hold completes cancels the charge.
+* **Overcharge:** Hold a tight flex for three seconds to ramp into a bright white glow with brighter glyphs; flow reverses only after the charge completes. Releasing powers the effect down over 600 ms; releasing before the hold completes cancels the charge without reversing flow.
 
 Gesture thresholds use normalized sensor values and may need calibration for the installed FSR. The thresholds and animation timings are centralized in `src/animation.cpp`.

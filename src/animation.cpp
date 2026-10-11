@@ -171,12 +171,15 @@ namespace overclock
             {
                 powering_down_ = false;
                 charge_progress_ = 0.0f;
+                overcharge_complete_ = false;
             }
         }
         else if (!charge_tracking_)
         {
             charge_progress_ = 0.0f;
         }
+        if (charge_progress_ >= 1.0f)
+            overcharge_complete_ = true;
 
         if (pulse_active_ && now >= pulse_until_)
             pulse_active_ = false;
@@ -207,7 +210,7 @@ namespace overclock
         for (int stream = 0; stream < STREAM_COUNT; ++stream)
         {
             const float step = animation_speed * STREAM_SPEEDS[stream] * frame_scale;
-            if (charge_progress_ > 0.0f)
+            if (overcharge_complete_)
             {
                 rain_heads_[stream] -= step;
                 if (rain_heads_[stream] < 0.0f)
@@ -234,7 +237,7 @@ namespace overclock
         frame.flex = flex_pct;
         frame.charge = charge_progress_;
         frame.glyph_density = density;
-        frame.reversed = charge_progress_ > 0.0f;
+        frame.reversed = overcharge_complete_;
         frame.speed_min_leds_per_second = animation_speed * STREAM_SPEEDS.front() * 60.0f;
         frame.speed_max_leds_per_second = animation_speed * STREAM_SPEEDS.back() * 60.0f;
 
@@ -264,7 +267,7 @@ namespace overclock
             uint32_t pixel = 0;
             for (int stream = 0; stream < STREAM_COUNT; ++stream)
             {
-                const float distance = charge_progress_ > 0.0f
+                const float distance = overcharge_complete_
                                            ? std::fmod(rain_heads_[stream] - i + LED_COUNT, static_cast<float>(LED_COUNT))
                                            : std::fmod(i - rain_heads_[stream] + LED_COUNT, static_cast<float>(LED_COUNT));
                 const float stepped_distance =
@@ -289,7 +292,7 @@ namespace overclock
                         stream_pixel = (green << 8) | blue;
                         const int glyph_offset = static_cast<int>(
                             elapsed_seconds * animation_speed * STREAM_SPEEDS[stream]) + stream * 3;
-                        const int glyph_phase = charge_progress_ > 0.0f
+                        const int glyph_phase = overcharge_complete_
                                                     ? positive_mod(i + glyph_offset, glyph_spacing)
                                                     : positive_mod(i - glyph_offset, glyph_spacing);
                         if (glyph_phase == 0)

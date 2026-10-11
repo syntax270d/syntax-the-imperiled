@@ -63,6 +63,7 @@ namespace overclock
         bool waiting_for_double_flex_hold_ = false;
         bool charge_tracking_ = false;
         bool powering_down_ = false;
+        bool overcharge_complete_ = false;
         bool pulse_active_ = false;
     };
 }
