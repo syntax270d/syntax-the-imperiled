@@ -46,19 +46,57 @@ namespace
                "streams expose a spread of baseline speeds");
     }
 
-    void test_stepped_stream_blocks_and_pulsing()
+    void test_glyph_blink_is_sparse()
     {
-        Animator dimmed_animator;
-        Animator bright_animator;
-        const Frame dimmed = dimmed_animator.update(0.0f, Milliseconds(0));
-        const Frame bright = bright_animator.update(0.0f, Milliseconds(240));
-        const auto green = [](uint32_t pixel) { return (pixel >> 8) & 0xFF; };
+        Animator steady_animator;
+        Animator blinking_animator;
+        const Frame steady = steady_animator.update(0.0f, Milliseconds(0));
+        const Frame blinking = blinking_animator.update(0.0f, Milliseconds(800));
+        int changed_pixels = 0;
+        for (int i = 0; i < overclock::LED_COUNT; ++i)
+        {
+            if (steady.pixels[i] != blinking.pixels[i])
+                ++changed_pixels;
+        }
 
-        expect(dimmed.pixels[3] == dimmed.pixels[4] &&
-                   dimmed.pixels[4] == dimmed.pixels[5],
-               "stream trail renders in three-LED blocks");
-        expect(green(bright.pixels[3]) > green(dimmed.pixels[3]),
-               "stream blocks pulse between dim and bright states");
+        expect(changed_pixels > 0 && changed_pixels < overclock::LED_COUNT / 3,
+               "only a sparse subset of glyphs blinks");
+        expect(steady.pixels[0] == blinking.pixels[0],
+               "stream head stays steadily lit while glyphs blink");
+    }
+
+    void test_glyph_sizes_have_distinct_motion()
+    {
+        Animator initial_animator;
+        Animator moving_animator;
+        const Frame initial = initial_animator.update(0.0f, Milliseconds(0));
+        const Frame moving = moving_animator.update(0.0f, Milliseconds(500));
+        int moved_pixels = 0;
+        for (int i = 0; i < overclock::LED_COUNT; ++i)
+        {
+            if (initial.pixels[i] != moving.pixels[i])
+                ++moved_pixels;
+        }
+
+        expect(moved_pixels > 0, "size-weighted glyph momentum moves accents independently");
+        expect(initial.pixels[0] == moving.pixels[0],
+               "glyph momentum does not disturb the stream head");
+    }
+
+    void test_glyph_depth_uses_color_and_intensity()
+    {
+        Animator animator;
+        const Frame frame = animator.update(0.0f, Milliseconds(0));
+        const bool has_foreground_tint = std::any_of(
+            frame.pixels.begin(), frame.pixels.end(),
+            [](uint32_t pixel)
+            {
+                const auto red = (pixel >> 16) & 0xFF;
+                return red > 0 && red < 136;
+            });
+
+        expect(has_foreground_tint,
+               "foreground glyphs use a brighter mint color to convey depth");
     }
 
     void test_phosphor_trail_persists_in_green()
@@ -157,7 +195,9 @@ namespace
         const std::vector<std::pair<const char *, void (*)()>> tests = {
             {"ADC normalization", test_adc_normalization},
             {"multiple idle streams", test_idle_has_multiple_streams},
-            {"stepped stream blocks and pulsing", test_stepped_stream_blocks_and_pulsing},
+            {"sparse glyph blinking", test_glyph_blink_is_sparse},
+            {"size-weighted glyph motion", test_glyph_sizes_have_distinct_motion},
+            {"glyph depth shading", test_glyph_depth_uses_color_and_intensity},
             {"phosphor trail persistence", test_phosphor_trail_persists_in_green},
             {"pulse duration", test_pulse_duration},
             {"flex density", test_repeated_flex_increases_density},

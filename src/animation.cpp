@@ -11,9 +11,12 @@ namespace overclock
             0.76f, 0.91f, 1.0f, 1.13f, 1.29f};
         constexpr std::array<float, STREAM_COUNT> STREAM_TRAIL_SCALES = {
             0.82f, 1.0f, 0.9f, 1.12f, 0.76f};
+        constexpr std::array<int, 8> GLYPH_WIDTHS = {1, 2, 3, 5, 3, 2, 1, 3};
         constexpr int STREAM_BLOCK_SIZE = 3;
-        constexpr auto STREAM_PULSE_INTERVAL = std::chrono::milliseconds(240);
-        constexpr float STREAM_PULSE_DIMMING = 0.65f;
+        constexpr int BLINKING_GLYPH_STRIDE = 5;
+        constexpr auto GLYPH_BLINK_INTERVAL = std::chrono::milliseconds(800);
+        constexpr float GLYPH_BLINK_DIMMING = 0.65f;
+        constexpr float GLYPH_MOMENTUM_SCALE = 0.2f;
         constexpr float PHOSPHOR_TRAIL_SCALE = 1.6f;
         constexpr float PHOSPHOR_FADE_EXPONENT = 0.45f;
         constexpr float PULSE_THRESHOLD = 0.20f;
@@ -35,6 +38,24 @@ namespace overclock
             const auto red = std::min(255u, static_cast<uint32_t>(((pixel >> 16) & 0xFF) * scale));
             const auto green = std::min(255u, static_cast<uint32_t>(((pixel >> 8) & 0xFF) * scale));
             const auto blue = std::min(255u, static_cast<uint32_t>((pixel & 0xFF) * scale));
+            return (red << 16) | (green << 8) | blue;
+        }
+
+        uint32_t shade_glyph_by_depth(uint32_t pixel, int depth)
+        {
+            const float brightness = depth == 0 ? 0.7f : depth == 1 ? 1.0f : 1.35f;
+            pixel = scale_pixel(pixel, brightness);
+
+            auto red = (pixel >> 16) & 0xFF;
+            auto green = (pixel >> 8) & 0xFF;
+            auto blue = pixel & 0xFF;
+            if (depth == 0)
+                blue = std::min(255u, blue + green / 5);
+            else if (depth == 2)
+            {
+                red = std::min(255u, red + 20);
+                blue = std::min(255u, blue + 8);
+            }
             return (red << 16) | (green << 8) | blue;
         }
 
@@ -265,6 +286,8 @@ namespace overclock
         for (int i = 0; i < LED_COUNT; ++i)
         {
             uint32_t pixel = 0;
+            int pixel_glyph_depth = -1;
+            bool pixel_is_head = false;
             for (int stream = 0; stream < STREAM_COUNT; ++stream)
             {
                 const float distance = overcharge_complete_
@@ -273,7 +296,9 @@ namespace overclock
                 const float stepped_distance =
                     static_cast<float>(static_cast<int>(distance) / STREAM_BLOCK_SIZE * STREAM_BLOCK_SIZE);
                 uint32_t stream_pixel = 0;
-                if (stepped_distance < STREAM_BLOCK_SIZE)
+                int stream_glyph_depth = -1;
+                const bool stream_is_head = stepped_distance < STREAM_BLOCK_SIZE;
+                if (stream_is_head)
                 {
                     stream_pixel = flex_pct > OVERCHARGE_THRESHOLD ? 0xFFFFFF : 0x88FF88;
                 }
@@ -290,21 +315,68 @@ namespace overclock
                         const auto blue = static_cast<uint32_t>(
                             (base_brightness * 0.3f) * std::pow(fade, 1.5f) * (1.0f + flex_pct));
                         stream_pixel = (green << 8) | blue;
-                        const int glyph_offset = static_cast<int>(
-                            elapsed_seconds * animation_speed * STREAM_SPEEDS[stream]) + stream * 3;
-                        const int glyph_phase = overcharge_complete_
-                                                    ? positive_mod(i + glyph_offset, glyph_spacing)
-                                                    : positive_mod(i - glyph_offset, glyph_spacing);
-                        if (glyph_phase == 0)
-                            stream_pixel = scale_pixel(stream_pixel, 1.5f);
+                        const float glyph_track_start = STREAM_BLOCK_SIZE + 1.0f;
+                        const auto blink_step = now.count() / GLYPH_BLINK_INTERVAL.count();
+                        for (int glyph_index = 0;
+                             glyph_track_start + glyph_index * glyph_spacing +
+                                     GLYPH_WIDTHS[(glyph_index + stream) % GLYPH_WIDTHS.size()] <=
+                                 stream_trail_length;
+                             ++glyph_index)
+                        {
+                            const int glyph_width =
+                                GLYPH_WIDTHS[(glyph_index + stream) % GLYPH_WIDTHS.size()];
+                            const float glyph_lane_length =
+                                std::max(1.0f, glyph_spacing - glyph_width);
+                            const float glyph_speed =
+                                animation_speed * STREAM_SPEEDS[stream] * 60.0f *
+                                GLYPH_MOMENTUM_SCALE * (1.0f - 3.0f / glyph_width);
+                            float glyph_offset = std::fmod(
+                                glyph_lane_length * 0.5f + elapsed_seconds * glyph_speed,
+                                glyph_lane_length);
+                            if (glyph_offset < 0.0f)
+                                glyph_offset += glyph_lane_length;
+                            const float glyph_position =
+                                glyph_track_start + glyph_index * glyph_spacing + glyph_offset;
+
+                            if (distance >= glyph_position &&
+                                distance < glyph_position + glyph_width)
+                            {
+                                const bool blinking_glyph =
+                                    (glyph_index + stream) % BLINKING_GLYPH_STRIDE == 0;
+                                const float glyph_brightness =
+                                    blinking_glyph && blink_step % 2 != 0
+                                        ? GLYPH_BLINK_DIMMING
+                                        : 1.5f;
+                                stream_glyph_depth =
+                                    positive_mod(glyph_index + stream, 3);
+                                stream_pixel = shade_glyph_by_depth(
+                                    scale_pixel(stream_pixel, glyph_brightness),
+                                    stream_glyph_depth);
+                                break;
+                            }
+                        }
                     }
                 }
-                const auto pulse_step = now.count() / STREAM_PULSE_INTERVAL.count();
-                const auto block_index = static_cast<std::int64_t>(stepped_distance) / STREAM_BLOCK_SIZE;
-                if ((pulse_step + block_index) % 2 != 0)
-                    stream_pixel = scale_pixel(stream_pixel, STREAM_PULSE_DIMMING);
-                if (pixel_strength(stream_pixel) > pixel_strength(pixel))
+                if (stream_is_head &&
+                    (!pixel_is_head || pixel_strength(stream_pixel) > pixel_strength(pixel)))
+                {
                     pixel = stream_pixel;
+                    pixel_glyph_depth = -1;
+                    pixel_is_head = true;
+                }
+                else if (!pixel_is_head && stream_glyph_depth >= 0 &&
+                    (stream_glyph_depth > pixel_glyph_depth ||
+                     (stream_glyph_depth == pixel_glyph_depth &&
+                      pixel_strength(stream_pixel) > pixel_strength(pixel))))
+                {
+                    pixel = stream_pixel;
+                    pixel_glyph_depth = stream_glyph_depth;
+                }
+                else if (!pixel_is_head && pixel_glyph_depth < 0 &&
+                         pixel_strength(stream_pixel) > pixel_strength(pixel))
+                {
+                    pixel = stream_pixel;
+                }
             }
 
             if (pulse_active_)

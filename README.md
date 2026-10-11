@@ -77,7 +77,7 @@ The test runner exits nonzero if any assertion fails and does not require LED ha
 
 * **The Spatial Clipping Curse:** Processing reality at sub-atomic speeds causes severe motor-frame drops and spatial packet loss[cite: 5]. Navigating doorframes inflicts -1HP elbow clipping damage, while climbing staircases triggers a -2HP collision check error[cite: 5].
 * **Pulse:** Crossing a light-flex threshold sends a short bright ripple down the strip. Pulses last 180 ms and have a 500 ms cooldown.
-* **Monospaced Stutter:** Rain streams advance in pulsing three-LED blocks, giving the flow a low-bandwidth terminal/radar cadence.
+* **Monospaced Stutter:** Rain streams advance in steady three-LED blocks, with moving 1-, 2-, 3-, and 5-LED glyphs. Smaller glyphs drift faster than the standard three-LED size, while larger glyphs move with heavier momentum. Overlapping glyphs use brightness and color to suggest front-to-back depth; only a sparse subset blinks slowly.
 * **Phosphor Afterglow:** Green stream trails extend farther and decay with a slow, nonlinear fade for a persistent terminal-phosphor look.
 * **Corporeal Glitch:** Flex twice above the gesture threshold, with the second flex held for 500 ms within 1.5 seconds of the first, to trigger a two-second crimson stutter.
 * **Flex Combos:** Repeated flexes within a three-second window increase the rain trail and glyph density, up to five density steps. Holding a medium flex adds a gentle brightness breath.
